@@ -13,6 +13,20 @@ const emptyContact = { name: '', email: '', telegram: '', whatsapp: '', discord:
 const statuses = ['Found', 'Sent', 'Responded', 'Interview', 'Failed', 'Succeeded'];
 const profileColumns = ['No.', 'Name', 'Country', 'Email', 'Link', 'Status', 'My contact', 'Created', 'Updated', 'Actions'];
 const avatarTones = ['#e4f2ea', '#f4ece4', '#e7eef6', '#f3e9f1'];
+const seedPassword = import.meta.env.VITE_SEED_PASSWORD || '';
+const accessKey = 'tailsman-access';
+
+async function passwordDigest(value) {
+  const bytes = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+function passwordsMatch(input, expected) {
+  if (!expected || input.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) difference |= input.charCodeAt(index) ^ expected.charCodeAt(index);
+  return difference === 0;
+}
 
 function Blank() { return <span className="muted">—</span>; }
 function formatWhen(value) {
@@ -44,9 +58,8 @@ function ExternalLink({ value }) {
 }
 
 function App() {
-  const [session, setSession] = useState(null);
-  const [authReady, setAuthReady] = useState(!supabase);
-  const [authMode, setAuthMode] = useState('signin');
+  const [access, setAccess] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
   const [rows, setRows] = useState([]);
@@ -76,7 +89,7 @@ function App() {
   const dialogRef = useRef(null);
 
   useEffect(() => {
-    if (!session) {
+    if (!access) {
       setViewing(null);
       setEditing(null);
       setDeleting(null);
@@ -85,17 +98,20 @@ function App() {
       setNotice('');
       setContacts([]);
     }
-  }, [session]);
+  }, [access]);
 
   useEffect(() => {
-    if (!supabase) return;
-    supabase.auth.getSession().then(({ data, error: authError }) => { if (authError) setError(authError.message); setSession(data.session); setAuthReady(true); });
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => { setSession(next); setAuthReady(true); setPage(1); setRows([]); setCount(0); setContacts([]); setStats({ total: 0, succeeded: 0, contacts: 0 }); });
-    return () => data.subscription.unsubscribe();
+    let cancelled = false;
+    passwordDigest(seedPassword).then(digest => {
+      if (cancelled) return;
+      setAccess(Boolean(seedPassword) && sessionStorage.getItem(accessKey) === digest);
+      setAuthReady(true);
+    });
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => { const timer = setTimeout(() => { setQuery(search.trim()); setPage(1); }, 300); return () => clearTimeout(timer); }, [search]);
   useEffect(() => {
-    if (!session || !supabase) return;
+    if (!access || !supabase) return;
     let cancelled = false;
     async function load() {
       setLoading(true); setError('');
@@ -123,7 +139,7 @@ function App() {
       } catch (loadError) { if (!cancelled) { setRows([]); setCount(0); setContacts([]); setError(loadError.message); } } finally { if (!cancelled) setLoading(false); }
     }
     load(); return () => { cancelled = true; };
-  }, [session, query, status, country, sort, page, size, revision]);
+  }, [access, query, status, country, sort, page, size, revision]);
   useEffect(() => {
     if (editing || deleting || contactEditing || contactDeleting) dialogRef.current?.showModal();
     else dialogRef.current?.close();
@@ -133,16 +149,16 @@ function App() {
   useEffect(() => { document.title = screen === 'contacts' ? 'Tailsman · Contacts' : 'Tailsman · People'; }, [screen]);
   function openEditor(profile) { setFormError(''); setViewing(null); setContactEditing(null); setContactDeleting(null); setEditing(profile); }
   function openContactEditor(contact) { setFormError(''); setViewing(null); setEditing(null); setDeleting(null); setContactEditing(contact); }
-  async function authenticate(event) {
+  async function unlock(event) {
     event.preventDefault(); setAuthBusy(true); setAuthMessage('');
-    const values = new FormData(event.currentTarget);
+    const password = String(new FormData(event.currentTarget).get('password') || '');
     try {
-      const credentials = { email: values.get('email').trim(), password: values.get('password') };
-      const { data, error: authError } = authMode === 'signup' ? await supabase.auth.signUp(credentials) : await supabase.auth.signInWithPassword(credentials);
-      if (authError) throw authError;
-      if (data.session) setSession(data.session); else setAuthMessage('Check your email to confirm your account, then sign in.');
-    } catch (authError) { setAuthMessage(authError.message); } finally { setAuthBusy(false); }
+      if (!passwordsMatch(password, seedPassword)) throw new Error('That password does not match.');
+      sessionStorage.setItem(accessKey, await passwordDigest(seedPassword));
+      setAccess(true);
+    } catch (unlockError) { setAuthMessage(unlockError.message); } finally { setAuthBusy(false); }
   }
+  function lock() { sessionStorage.removeItem(accessKey); setAccess(false); setPage(1); setRows([]); setCount(0); setStats({ total: 0, succeeded: 0, contacts: 0 }); }
   async function save(event) {
     event.preventDefault(); setBusy(true); setFormError('');
     const values = new FormData(event.currentTarget);
@@ -191,11 +207,11 @@ function App() {
     } catch (deleteError) { setFormError(deleteError.message); } finally { setBusy(false); }
   }
   const totalPages = Math.max(1, Math.ceil(count / size));
-  const enabled = Boolean(session && !loading);
+  const enabled = Boolean(access && !loading);
   const dialogTitle = contactDeleting ? 'Delete contact?' : contactEditing ? (contactEditing.id ? 'Edit contact' : 'Add a contact') : deleting ? 'Delete profile?' : editing?.id ? 'Edit profile' : 'Add a new profile';
   const dialogText = contactDeleting ? 'Profiles that used this contact will keep their other details.' : contactEditing ? 'A name is enough to choose this person on a profile.' : deleting ? 'This permanently removes the profile from Supabase.' : 'A few details. A new connection.';
   if (!authReady) return null;
-  if (!session) return <div className="gate">{!supabase ? <div className="setup"><strong>Let’s connect your workspace.</strong><span>Add your Supabase URL and public key to <code>.env</code>, then apply the included database migrations. Your profiles will be saved securely in Supabase.</span></div> : <form className="gate-card" onSubmit={authenticate}><a className="brand" href="/"><span className="brand-mark"><Leaf size={23}/></span>tailsman<span className="brand-dot">.</span></a><h1>{authMode === 'signup' ? 'Create account' : 'Sign in'}<span className="heading-dot">.</span></h1><label>Email<input name="email" type="email" autoComplete="email" required/></label><label>Password<input name="password" type="password" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} minLength={8} required/></label>{authMessage && <p role="status">{authMessage}</p>}<button className="button primary full" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'signup' ? 'Create account' : 'Sign in'}</button><button type="button" className="text-button full" disabled={authBusy} onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthMessage(''); }}>{authMode === 'signin' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button></form>}</div>;
+  if (!access) return <div className="gate">{!supabase || !seedPassword ? <div className="setup"><strong>Let’s connect your workspace.</strong><span>Add your Supabase URL, public key, and <code>VITE_SEED_PASSWORD</code> to <code>.env</code>, then restart the app and apply the included database migrations.</span></div> : <form className="gate-card" onSubmit={unlock}><a className="brand" href="/"><span className="brand-mark"><Leaf size={23}/></span>tailsman<span className="brand-dot">.</span></a><h1>Enter password<span className="heading-dot">.</span></h1><label>Password<input name="password" type="password" autoComplete="current-password" autoFocus required/></label>{authMessage && <p className="form-error" role="alert">{authMessage}</p>}<button className="button primary full" disabled={authBusy}>{authBusy ? 'Please wait…' : 'Continue'}</button></form>}</div>;
   return <div className="shell">
     <ProfileDetails profile={viewing} onClose={() => setViewing(null)} onEdit={openEditor}/>
     <aside className="sidebar">
@@ -207,7 +223,7 @@ function App() {
       <div className="sidebar-bottom"><span className="mini-logo"><LayoutGrid size={18}/></span><strong>A little more connected.</strong><p>Your people, all in one place.</p><div className="connection"><span className="online"/>Connected to Supabase</div></div>
     </aside>
     <main>
-      <header className="topbar"><span>Workspace <ChevronRight size={13}/> <strong>{screen === 'contacts' ? 'My contacts' : 'People'}</strong></span><div className="account"><span className="account-email">{session.user.email}</span><button className="icon-button" aria-label="Sign out" onClick={async () => { const { error: signOutError } = await supabase.auth.signOut(); if (signOutError) setError(signOutError.message); }}><LogOut size={17}/></button><span className="avatar account-avatar">T</span></div></header>
+      <header className="topbar"><span>Workspace <ChevronRight size={13}/> <strong>{screen === 'contacts' ? 'My contacts' : 'People'}</strong></span><div className="account"><button className="icon-button" aria-label="Lock" onClick={lock}><LogOut size={17}/></button><span className="avatar account-avatar">T</span></div></header>
       <div className="content">
         <div className="breadcrumb">YOUR WORKSPACE, CONNECTED</div>
         {screen === 'contacts' ? <>
