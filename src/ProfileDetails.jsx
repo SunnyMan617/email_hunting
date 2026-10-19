@@ -34,6 +34,9 @@ export default function ProfileDetails({ profile, onClose, onEdit }) {
         <div><dt>Email</dt><dd>{profile.email || 'Not provided'}</dd></div>
         <div><dt>Link</dt><dd><ProfileLink value={profile.link}/></dd></div>
         <div><dt>Additional link</dt><dd><ProfileLink value={profile.additional_link}/></dd></div>
+        <div><dt>Telegram</dt><dd>{profile.telegram || 'Not provided'}</dd></div>
+        <div><dt>WhatsApp</dt><dd>{profile.whatsapp || 'Not provided'}</dd></div>
+        <div><dt>Discord</dt><dd>{profile.discord || 'Not provided'}</dd></div>
         <div><dt>Status</dt><dd><span className={`badge ${profile.status.toLowerCase()}`}><span/>{profile.status}</span></dd></div>
         <div><dt>My contact</dt><dd>{contact?.name || 'Not linked'}</dd></div>
         {contact && <>

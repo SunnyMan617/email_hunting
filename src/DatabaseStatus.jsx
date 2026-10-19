@@ -11,7 +11,7 @@ export default function DatabaseStatus() {
     async function check() {
       try {
         const [profiles, contacts] = await Promise.all([
-          supabase.from('profiles').select('id, link, email, contact_id, updated_at').limit(0),
+          supabase.from('profiles').select('id, link, email, contact_id, updated_at, telegram, whatsapp, discord').limit(0),
           supabase.from('contacts').select('id').limit(0),
         ]);
         if (cancelled) return;
@@ -29,7 +29,7 @@ export default function DatabaseStatus() {
   return <div className="setup" role="status">
     <strong>{status === 'missing' ? 'One more step: create your profile table.' : status === 'update' ? 'Your database needs the contacts update.' : 'Unable to reach your profile database.'}</strong>
     {status === 'missing' && <span>In the Supabase SQL editor, run <code>supabase/migrations/202610180001_profiles.sql</code> and then <code>supabase/migrations/202610190001_contacts.sql</code>.</span>}
-    {status === 'update' && <span>In the Supabase SQL editor, run <code>supabase/migrations/202610190001_contacts.sql</code>. This adds your contacts and the new profile fields.</span>}
+    {status === 'update' && <span>In the Supabase SQL editor, run <code>supabase/migrations/202610190001_contacts.sql</code> if you have not already, then <code>supabase/migrations/202610190002_profile_channels.sql</code>.</span>}
     {status === 'unavailable' && <span>Check your connection and Supabase project settings, then try again.</span>}
     {status !== 'unavailable' && <a className="text-button" href={editor} target="_blank" rel="noreferrer">Open Supabase SQL Editor ↗</a>}
     <button className="text-button" onClick={() => setAttempt(value => value + 1)}>Check database again</button>
